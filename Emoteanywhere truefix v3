@@ -1,0 +1,376 @@
+--[[
+    Emote Anywhere — TRUE FIX v3
+    
+    FIX THẬT SỰ:
+    - Không dùng menu emote gốc (bị block khi bay)
+    - Tự load animation trực tiếp qua AnimationId
+    - Bypass hoàn toàn ground check của Roblox
+    
+    CÁCH DÙNG:
+    1. Chạy script
+    2. Nhập Animation ID vào ô (hoặc dùng nút preset)
+    3. Nhấn "▶ Phát" — emote chạy DÙ đang bay/nhảy/rơi
+    4. Nhấn "🔒 Lock" để loop liên tục
+--]]
+
+local Players        = game:GetService("Players")
+local RunService     = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local LP       = Players.LocalPlayer
+local Char     = LP.Character or LP.CharacterAdded:Wait()
+local Hum      = Char:WaitForChild("Humanoid")
+local Animator = Hum:WaitForChild("Animator")
+
+-- =============================================
+-- LOAD LIZLUK (để có emote list UI gốc)
+-- =============================================
+pcall(function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/Lizluk/lizluk-script/refs/heads/main/Emote%20Fe"
+    ))()
+end)
+task.wait(2)
+
+-- =============================================
+-- CORE ENGINE
+-- =============================================
+
+local currentTrack = nil
+local isLocked     = false
+local isPaused     = false
+local loopConn     = nil
+
+-- Default animations cần bỏ qua
+local DEFAULTS = {
+    "507766388","507766666","507766951","507776061",
+    "507776159","507777826","507777347","180426354","180426388",
+    "507760248","507760952","507761454","507762013","507763714",
+    "507765644","616163682","616159736","616158929",
+}
+local function isDefault(id)
+    id = tostring(id)
+    for _, v in ipairs(DEFAULTS) do
+        if id:find(v) then return true end
+    end
+    return false
+end
+
+-- =============================================
+-- PLAY ANIMATION TRỰC TIẾP — BYPASS GROUND CHECK
+-- Không dùng menu emote → không bị block
+-- =============================================
+local function PlayEmoteDirect(animId)
+    -- Dừng track cũ
+    if currentTrack then
+        pcall(function() currentTrack:Stop(0) end)
+        currentTrack = nil
+    end
+
+    -- Tạo Animation object mới
+    local animObj = Instance.new("Animation")
+    animObj.AnimationId = "rbxassetid://" .. tostring(animId)
+
+    -- Load track qua Animator (không qua EmoteMenu → không bị ground check)
+    local ok, track = pcall(function()
+        return Animator:LoadAnimation(animObj)
+    end)
+    if not ok or not track then
+        return nil, "Không load được animation ID: " .. tostring(animId)
+    end
+
+    -- Set priority cao nhất để ghi đè mọi animation
+    track.Priority = Enum.AnimationPriority.Action4
+    track.Looped   = true
+
+    -- Phát ngay lập tức
+    track:Play(0, 1, 1)
+
+    currentTrack = track
+    return track, nil
+end
+
+-- Dừng animations mặc định bị nhiễu
+local function suppressDefaults()
+    if not Animator then return end
+    for _, t in ipairs(Animator:GetPlayingAnimationTracks()) do
+        if t ~= currentTrack and t.Animation and isDefault(t.Animation.AnimationId) then
+            pcall(function() t:Stop(0.1) end)
+        end
+    end
+end
+
+-- Loop giữ emote
+local function startLoop()
+    if loopConn then loopConn:Disconnect() end
+    loopConn = RunService.Heartbeat:Connect(function()
+        if not isLocked or not currentTrack then return end
+        if isPaused then
+            pcall(function() currentTrack:AdjustSpeed(0) end)
+            return
+        end
+        if not currentTrack.IsPlaying then
+            pcall(function()
+                currentTrack:Play(0, 1, 1)
+                currentTrack.Priority = Enum.AnimationPriority.Action4
+            end)
+        end
+        suppressDefaults()
+    end)
+end
+
+-- =============================================
+-- EMOTE PRESETS (ID phổ biến)
+-- =============================================
+local PRESETS = {
+    { name = "Dance 1",    id = "507771019" },
+    { name = "Dance 2",    id = "507776043" },
+    { name = "Dance 3",    id = "507777268" },
+    { name = "Wave",       id = "507770239" },
+    { name = "Point",      id = "507770453" },
+    { name = "Cheer",      id = "507770677" },
+    { name = "Laugh",      id = "507770818" },
+}
+
+-- =============================================
+-- GUI
+-- =============================================
+local oldGui = LP.PlayerGui:FindFirstChild("EmoteAnywhereTrueFix")
+if oldGui then oldGui:Destroy() end
+
+local SG = Instance.new("ScreenGui")
+SG.Name           = "EmoteAnywhereTrueFix"
+SG.ResetOnSpawn   = false
+SG.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+SG.Parent         = LP.PlayerGui
+
+-- Main Frame
+local MF = Instance.new("Frame")
+MF.Name             = "Main"
+MF.Size             = UDim2.new(0, 260, 0, 310)
+MF.Position         = UDim2.new(0, 20, 0.5, -155)
+MF.BackgroundColor3 = Color3.fromRGB(10, 10, 18)
+MF.BorderSizePixel  = 0
+MF.Parent           = SG
+Instance.new("UICorner", MF).CornerRadius = UDim.new(0, 14)
+local s = Instance.new("UIStroke", MF)
+s.Color = Color3.fromRGB(130, 60, 230); s.Thickness = 3
+
+-- Title
+local TB = Instance.new("Frame")
+TB.Size             = UDim2.new(1, 0, 0, 36)
+TB.BackgroundColor3 = Color3.fromRGB(90, 35, 165)
+TB.BorderSizePixel  = 0
+TB.Parent           = MF
+Instance.new("UICorner", TB).CornerRadius = UDim.new(0, 14)
+
+local TL = Instance.new("TextLabel")
+TL.Size   = UDim2.new(1, 0, 1, 0); TL.BackgroundTransparency = 1
+TL.Text   = "🎭 Emote Anywhere  v3"
+TL.TextColor3 = Color3.fromRGB(255,255,255)
+TL.TextSize   = 15; TL.Font = Enum.Font.GothamBold; TL.Parent = TB
+
+-- Badge
+local Badge = Instance.new("TextLabel")
+Badge.Size = UDim2.new(1,-10,0,18); Badge.Position = UDim2.new(0,5,0,40)
+Badge.BackgroundTransparency = 1
+Badge.Text = "✅ Bypass hoàn toàn — không cần đứng đất"
+Badge.TextColor3 = Color3.fromRGB(80, 230, 120)
+Badge.TextSize = 11; Badge.Font = Enum.Font.GothamBold; Badge.Parent = MF
+
+-- Status
+local SL = Instance.new("TextLabel")
+SL.Size = UDim2.new(1,-10,0,20); SL.Position = UDim2.new(0,5,0,62)
+SL.BackgroundTransparency = 1; SL.Text = "Trạng thái: Chờ..."
+SL.TextColor3 = Color3.fromRGB(200,200,200); SL.TextSize = 13
+SL.Font = Enum.Font.Gotham; SL.Parent = MF
+
+-- Label nhập ID
+local IdLabel = Instance.new("TextLabel")
+IdLabel.Size = UDim2.new(1,-10,0,16); IdLabel.Position = UDim2.new(0,5,0,87)
+IdLabel.BackgroundTransparency = 1; IdLabel.Text = "Animation ID (tùy chỉnh):"
+IdLabel.TextColor3 = Color3.fromRGB(180,180,255); IdLabel.TextSize = 12
+IdLabel.Font = Enum.Font.GothamBold; IdLabel.TextXAlignment = Enum.TextXAlignment.Left
+IdLabel.Parent = MF
+
+-- TextBox nhập ID
+local IdBox = Instance.new("TextBox")
+IdBox.Size             = UDim2.new(0, 155, 0, 30)
+IdBox.Position         = UDim2.new(0, 5, 0, 106)
+IdBox.BackgroundColor3 = Color3.fromRGB(25, 25, 40)
+IdBox.TextColor3       = Color3.fromRGB(255, 255, 255)
+IdBox.PlaceholderText  = "VD: 507771019"
+IdBox.PlaceholderColor3 = Color3.fromRGB(120,120,120)
+IdBox.Text             = ""
+IdBox.TextSize         = 13; IdBox.Font = Enum.Font.Gotham
+IdBox.BorderSizePixel  = 0; IdBox.Parent = MF
+Instance.new("UICorner", IdBox).CornerRadius = UDim.new(0, 8)
+local ib_s = Instance.new("UIStroke", IdBox)
+ib_s.Color = Color3.fromRGB(100,60,180); ib_s.Thickness = 1.5
+
+-- Nút Phát (custom ID)
+local PlayBtn = Instance.new("TextButton")
+PlayBtn.Size             = UDim2.new(0, 88, 0, 30)
+PlayBtn.Position         = UDim2.new(0, 165, 0, 106)
+PlayBtn.BackgroundColor3 = Color3.fromRGB(40, 160, 60)
+PlayBtn.Text             = "▶ Phát"
+PlayBtn.TextColor3       = Color3.fromRGB(255,255,255)
+PlayBtn.TextSize         = 14; PlayBtn.Font = Enum.Font.GothamBold
+PlayBtn.BorderSizePixel  = 0; PlayBtn.Parent = MF
+Instance.new("UICorner", PlayBtn).CornerRadius = UDim.new(0, 8)
+
+-- Separator
+local Sep = Instance.new("Frame")
+Sep.Size = UDim2.new(1,-20,0,1); Sep.Position = UDim2.new(0,10,0,142)
+Sep.BackgroundColor3 = Color3.fromRGB(80,40,120); Sep.BorderSizePixel = 0; Sep.Parent = MF
+
+-- Label presets
+local PreLabel = Instance.new("TextLabel")
+PreLabel.Size = UDim2.new(1,-10,0,16); PreLabel.Position = UDim2.new(0,5,0,148)
+PreLabel.BackgroundTransparency = 1; PreLabel.Text = "⚡ Preset nhanh:"
+PreLabel.TextColor3 = Color3.fromRGB(180,180,255); PreLabel.TextSize = 12
+PreLabel.Font = Enum.Font.GothamBold; PreLabel.TextXAlignment = Enum.TextXAlignment.Left
+PreLabel.Parent = MF
+
+-- Preset buttons (2 per row)
+for i, preset in ipairs(PRESETS) do
+    local col  = (i - 1) % 2       -- 0 or 1
+    local row  = math.floor((i - 1) / 2)
+    local btn  = Instance.new("TextButton")
+    btn.Size             = UDim2.new(0, 118, 0, 26)
+    btn.Position         = UDim2.new(0, 5 + col * 126, 0, 168 + row * 30)
+    btn.BackgroundColor3 = Color3.fromRGB(55, 35, 100)
+    btn.Text             = preset.name
+    btn.TextColor3       = Color3.fromRGB(220, 200, 255)
+    btn.TextSize         = 13; btn.Font = Enum.Font.GothamBold
+    btn.BorderSizePixel  = 0; btn.Parent = MF
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 7)
+
+    btn.MouseButton1Click:Connect(function()
+        local track, err2 = PlayEmoteDirect(preset.id)
+        if track then
+            isLocked = true
+            startLoop()
+            SL.Text       = "✅ " .. preset.name .. " (locked)"
+            SL.TextColor3 = Color3.fromRGB(80, 255, 110)
+            btn.BackgroundColor3 = Color3.fromRGB(80, 50, 150)
+        else
+            SL.Text       = "❌ Lỗi: " .. (err2 or "?")
+            SL.TextColor3 = Color3.fromRGB(255, 80, 80)
+        end
+    end)
+end
+
+-- Dải nút Lock / Unlock / Pause ở dưới
+local function makeBotBtn(txt, bg, px, py, w)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, w, 0, 30); b.Position = UDim2.new(0, px, 0, py)
+    b.BackgroundColor3 = bg; b.Text = txt
+    b.TextColor3 = Color3.fromRGB(255,255,255); b.TextSize = 13
+    b.Font = Enum.Font.GothamBold; b.BorderSizePixel = 0; b.Parent = MF
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+    return b
+end
+
+local yBot = 168 + math.ceil(#PRESETS / 2) * 30 + 6
+
+local LockBtn2   = makeBotBtn("🔒 Lock",    Color3.fromRGB(35,155,60),  5,   yBot, 75)
+local UnlockBtn2 = makeBotBtn("🔓 Unlock",  Color3.fromRGB(170,40,40),  85,  yBot, 80)
+local PauseBtn2  = makeBotBtn("⏸ Pause",   Color3.fromRGB(180,120,10), 170, yBot, 82)
+
+-- Resize frame
+MF.Size = UDim2.new(0, 260, 0, yBot + 40)
+
+-- =============================================
+-- BUTTON EVENTS
+-- =============================================
+
+PlayBtn.MouseButton1Click:Connect(function()
+    local id = IdBox.Text:match("%d+")
+    if not id then
+        SL.Text = "⚠️ Nhập ID hợp lệ!"; SL.TextColor3 = Color3.fromRGB(255,200,50)
+        return
+    end
+    local track, err2 = PlayEmoteDirect(id)
+    if track then
+        isLocked = true
+        startLoop()
+        SL.Text       = "✅ Phát ID " .. id .. " (locked)"
+        SL.TextColor3 = Color3.fromRGB(80, 255, 110)
+    else
+        SL.Text       = "❌ " .. (err2 or "Lỗi không xác định")
+        SL.TextColor3 = Color3.fromRGB(255, 80, 80)
+    end
+end)
+
+LockBtn2.MouseButton1Click:Connect(function()
+    if not currentTrack then
+        -- Thử lấy track đang chạy
+        for _, t in ipairs(Animator:GetPlayingAnimationTracks()) do
+            if t.Animation and not isDefault(t.Animation.AnimationId) then
+                currentTrack = t; break
+            end
+        end
+    end
+    if currentTrack then
+        isLocked = true
+        startLoop()
+        SL.Text = "✅ Locked!"; SL.TextColor3 = Color3.fromRGB(80,255,110)
+    else
+        SL.Text = "⚠️ Phát emote trước!"; SL.TextColor3 = Color3.fromRGB(255,200,50)
+    end
+end)
+
+UnlockBtn2.MouseButton1Click:Connect(function()
+    isLocked = false; isPaused = false
+    if loopConn then loopConn:Disconnect() end
+    if currentTrack then pcall(function() currentTrack:Stop(0.3) end) end
+    currentTrack = nil
+    PauseBtn2.Text = "⏸ Pause"; PauseBtn2.BackgroundColor3 = Color3.fromRGB(180,120,10)
+    SL.Text = "Đã unlock"; SL.TextColor3 = Color3.fromRGB(200,200,200)
+end)
+
+PauseBtn2.MouseButton1Click:Connect(function()
+    if not isLocked then SL.Text = "⚠️ Lock trước!"; SL.TextColor3 = Color3.fromRGB(255,200,50); return end
+    if not isPaused then
+        isPaused = true
+        pcall(function() currentTrack:AdjustSpeed(0) end)
+        PauseBtn2.Text = "▶ Resume"; PauseBtn2.BackgroundColor3 = Color3.fromRGB(30,110,190)
+        SL.Text = "⏸ Tạm dừng"; SL.TextColor3 = Color3.fromRGB(100,180,255)
+    else
+        isPaused = false
+        pcall(function() currentTrack:AdjustSpeed(1) end)
+        PauseBtn2.Text = "⏸ Pause"; PauseBtn2.BackgroundColor3 = Color3.fromRGB(180,120,10)
+        SL.Text = "✅ Đang chạy"; SL.TextColor3 = Color3.fromRGB(80,255,110)
+    end
+end)
+
+-- Drag
+local drag, ds, sp = false, nil, nil
+TB.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        drag = true; ds = i.Position; sp = MF.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(i)
+    if drag and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+        local d = i.Position - ds
+        MF.Position = UDim2.new(sp.X.Scale, sp.X.Offset+d.X, sp.Y.Scale, sp.Y.Offset+d.Y)
+    end
+end)
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then drag = false end
+end)
+
+-- =============================================
+-- RESPAWN
+-- =============================================
+LP.CharacterAdded:Connect(function(c)
+    Char = c; Hum = c:WaitForChild("Humanoid"); Animator = Hum:WaitForChild("Animator")
+    isLocked = false; isPaused = false; currentTrack = nil
+    if loopConn then loopConn:Disconnect() end
+    SL.Text = "Respawn — chọn emote lại"; SL.TextColor3 = Color3.fromRGB(200,200,200)
+end)
+
+print("[EmoteAnywhere v3] ✅ TRUE BYPASS — không cần đứng đất!")
+print("[EmoteAnywhere v3] Dùng preset hoặc nhập Animation ID trực tiếp")

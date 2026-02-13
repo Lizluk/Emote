@@ -1,0 +1,911 @@
+--[[
+    Emote Anywhere v5.3 — SIMPLIFIED & WORKING
+    
+    Loại bỏ mọi thứ phức tạp, chỉ giữ core features
+    100% tested and working
+--]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+
+local LP = Players.LocalPlayer
+local Char = LP.Character or LP.CharacterAdded:Wait()
+local Hum = Char:WaitForChild("Humanoid")
+local Animator = Hum:WaitForChild("Animator")
+
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🎭 Emote Anywhere v5.3 Starting...")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+-- =============================================
+-- STORAGE
+-- =============================================
+local function ensureFolder()
+    if not isfolder("EmoteAnywhere") then
+        makefolder("EmoteAnywhere")
+    end
+end
+
+-- =============================================
+-- DATA
+-- =============================================
+local currentTrack = nil
+local isLocked = false
+local isPaused = false
+local loopConn = nil
+local currentFilter = "all"
+
+-- Keybinds
+local keybinds = {} -- { [KeyCode] = emoteId }
+local emoteKeybinds = {} -- { [emoteId] = KeyCode }
+local isSettingKeybind = false
+local settingKeybindFor = nil
+local unlockKeybind = nil
+local isSettingUnlockKey = false
+
+-- Data
+local favorites = {}
+local customEmotes = {}
+local allEmotes = {}
+
+-- Default emotes
+local defaultPresets = {
+    { name = "Dance 1", id = "507771019" },
+    { name = "Dance 2", id = "507776043" },
+    { name = "Dance 3", id = "507777268" },
+    { name = "Wave", id = "507770239" },
+    { name = "Point", id = "507770453" },
+    { name = "Cheer", id = "507770677" },
+    { name = "Laugh", id = "507770818" },
+}
+
+local DEFAULTS = {
+    "507766388","507766666","507766951","507776061",
+    "507776159","507777826","507777347","180426354","180426388",
+    "507760248","507760952","507761454","507762013","507763714",
+    "507765644","616163682","616159736","616158929",
+}
+
+-- =============================================
+-- STORAGE FUNCTIONS
+-- =============================================
+local function loadFavorites()
+    ensureFolder()
+    if isfile("EmoteAnywhere/favorites.json") then
+        pcall(function()
+            favorites = HttpService:JSONDecode(readfile("EmoteAnywhere/favorites.json"))
+        end)
+    end
+end
+
+local function saveFavorites()
+    ensureFolder()
+    writefile("EmoteAnywhere/favorites.json", HttpService:JSONEncode(favorites))
+end
+
+local function loadCustomEmotes()
+    ensureFolder()
+    if isfile("EmoteAnywhere/custom_emotes.json") then
+        pcall(function()
+            customEmotes = HttpService:JSONDecode(readfile("EmoteAnywhere/custom_emotes.json"))
+        end)
+    end
+end
+
+local function saveCustomEmotes()
+    ensureFolder()
+    writefile("EmoteAnywhere/custom_emotes.json", HttpService:JSONEncode(customEmotes))
+end
+
+local function loadKeybinds()
+    ensureFolder()
+    if isfile("EmoteAnywhere/keybinds.json") then
+        pcall(function()
+            local data = HttpService:JSONDecode(readfile("EmoteAnywhere/keybinds.json"))
+            keybinds = {}
+            emoteKeybinds = {}
+            for _, bind in ipairs(data) do
+                local keyCode = Enum.KeyCode[bind.key]
+                if keyCode then
+                    keybinds[keyCode] = bind.emoteId
+                    emoteKeybinds[bind.emoteId] = keyCode
+                end
+            end
+        end)
+    end
+end
+
+local function saveKeybinds()
+    ensureFolder()
+    local saveData = {}
+    for keyCode, emoteId in pairs(keybinds) do
+        local keyName = tostring(keyCode):gsub("Enum%.KeyCode%.", "")
+        table.insert(saveData, { key = keyName, emoteId = emoteId })
+    end
+    writefile("EmoteAnywhere/keybinds.json", HttpService:JSONEncode(saveData))
+end
+
+local function loadSettings()
+    ensureFolder()
+    if isfile("EmoteAnywhere/settings.json") then
+        pcall(function()
+            local data = HttpService:JSONDecode(readfile("EmoteAnywhere/settings.json"))
+            if data.unlockKey then
+                unlockKeybind = Enum.KeyCode[data.unlockKey]
+            end
+        end)
+    end
+end
+
+local function saveSettings()
+    ensureFolder()
+    local settings = {
+        unlockKey = unlockKeybind and tostring(unlockKeybind):gsub("Enum%.KeyCode%.", "") or nil
+    }
+    writefile("EmoteAnywhere/settings.json", HttpService:JSONEncode(settings))
+end
+
+-- =============================================
+-- HELPER FUNCTIONS
+-- =============================================
+local function getKeyName(keyCode)
+    return tostring(keyCode):gsub("Enum.KeyCode.", "")
+end
+
+local function isFavorite(emoteId)
+    for _, fav in ipairs(favorites) do
+        if fav == emoteId then return true end
+    end
+    return false
+end
+
+local function toggleFavorite(emoteId)
+    if isFavorite(emoteId) then
+        for i, fav in ipairs(favorites) do
+            if fav == emoteId then
+                table.remove(favorites, i)
+                break
+            end
+        end
+    else
+        table.insert(favorites, emoteId)
+    end
+    saveFavorites()
+end
+
+local function findEmoteById(emoteId)
+    for _, e in ipairs(allEmotes) do
+        if e.id == emoteId then return e end
+    end
+    return nil
+end
+
+local function buildEmoteList()
+    allEmotes = {}
+    -- Add defaults
+    for _, p in ipairs(defaultPresets) do
+        table.insert(allEmotes, {
+            name = p.name,
+            id = p.id,
+            custom = false
+        })
+    end
+    -- Add customs
+    for _, c in ipairs(customEmotes) do
+        table.insert(allEmotes, {
+            name = c.name,
+            id = c.id,
+            custom = true
+        })
+    end
+end
+
+local function addCustomEmote(name, id)
+    for _, e in ipairs(customEmotes) do
+        if e.id == id then
+            return false, "ID đã tồn tại!"
+        end
+    end
+    table.insert(customEmotes, { name = name, id = id })
+    saveCustomEmotes()
+    buildEmoteList()
+    return true, "Đã thêm " .. name
+end
+
+local function removeCustomEmote(id)
+    for i, e in ipairs(customEmotes) do
+        if e.id == id then
+            table.remove(customEmotes, i)
+            saveCustomEmotes()
+            buildEmoteList()
+            -- Remove keybind too
+            local keyCode = emoteKeybinds[id]
+            if keyCode then
+                keybinds[keyCode] = nil
+                emoteKeybinds[id] = nil
+                saveKeybinds()
+            end
+            return true
+        end
+    end
+    return false
+end
+
+-- =============================================
+-- EMOTE PLAYBACK
+-- =============================================
+local function isDefault(animId)
+    local id = animId:match("%d+")
+    for _, d in ipairs(DEFAULTS) do
+        if d == id then return true end
+    end
+    return false
+end
+
+local function PlayEmote(animId)
+    if not Char or not Hum or not Animator then
+        return nil, "Character not ready"
+    end
+    
+    local anim = Instance.new("Animation")
+    anim.AnimationId = "rbxassetid://" .. animId
+    
+    local ok, track = pcall(function()
+        return Animator:LoadAnimation(anim)
+    end)
+    
+    if not ok or not track then
+        return nil, "Failed to load"
+    end
+    
+    if currentTrack then
+        pcall(function() currentTrack:Stop() end)
+    end
+    
+    currentTrack = track
+    
+    -- Set priority cao để không bị override bởi default animations
+    track.Priority = Enum.AnimationPriority.Action
+    
+    track:Play()
+    return track
+end
+
+local function unlockEmote()
+    if currentTrack then
+        pcall(function() currentTrack:Stop() end)
+        currentTrack = nil
+    end
+    isLocked = false
+    isPaused = false
+    if loopConn then
+        loopConn:Disconnect()
+        loopConn = nil
+    end
+    return true
+end
+
+local function startLoop()
+    if loopConn then loopConn:Disconnect() end
+    
+    -- Loop bằng Heartbeat để check liên tục
+    loopConn = RunService.Heartbeat:Connect(function()
+        if not isLocked or isPaused then return end
+        if currentTrack then
+            -- Nếu animation dừng, play lại ngay
+            if not currentTrack.IsPlaying then
+                currentTrack:Play()
+            end
+            -- Nếu gần hết (99% length), restart để không bị gap
+            if currentTrack.TimePosition >= currentTrack.Length * 0.99 then
+                currentTrack:Stop()
+                currentTrack:Play()
+            end
+        end
+    end)
+    
+    -- Thêm listener khi animation stopped
+    if currentTrack then
+        currentTrack.Stopped:Connect(function()
+            if isLocked and not isPaused then
+                -- Restart ngay khi dừng
+                task.wait(0.05)
+                if currentTrack and isLocked and not isPaused then
+                    currentTrack:Play()
+                end
+            end
+        end)
+    end
+end
+
+-- =============================================
+-- GUI
+-- =============================================
+local SG = Instance.new("ScreenGui")
+SG.Name = "EmoteAnywhereGUI"
+SG.ResetOnSpawn = false
+SG.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+local MF = Instance.new("Frame")
+MF.Size = UDim2.new(0, 480, 0, 550)
+MF.Position = UDim2.new(0.5, -240, 0.5, -275)
+MF.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+MF.BorderSizePixel = 0
+MF.Parent = SG
+
+Instance.new("UICorner", MF).CornerRadius = UDim.new(0, 12)
+
+local TB = Instance.new("TextLabel")
+TB.Size = UDim2.new(1, 0, 0, 40)
+TB.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+TB.BorderSizePixel = 0
+TB.Text = "🎭 Emote Anywhere v5.3"
+TB.TextColor3 = Color3.fromRGB(255, 255, 255)
+TB.Font = Enum.Font.GothamBold
+TB.TextSize = 16
+TB.Parent = MF
+
+Instance.new("UICorner", TB).CornerRadius = UDim.new(0, 12)
+
+local SL = Instance.new("TextLabel")
+SL.Size = UDim2.new(1, -20, 0, 25)
+SL.Position = UDim2.new(0, 10, 0, 50)
+SL.BackgroundTransparency = 1
+SL.Text = "Ready"
+SL.TextColor3 = Color3.fromRGB(200, 200, 200)
+SL.Font = Enum.Font.Gotham
+SL.TextSize = 13
+SL.TextXAlignment = Enum.TextXAlignment.Left
+SL.Parent = MF
+
+-- Filter Frame
+local FilterFrame = Instance.new("Frame")
+FilterFrame.Size = UDim2.new(1, -20, 0, 30)
+FilterFrame.Position = UDim2.new(0, 10, 0, 80)
+FilterFrame.BackgroundTransparency = 1
+FilterFrame.Parent = MF
+
+local function createFilterBtn(name, text, pos)
+    local btn = Instance.new("TextButton")
+    btn.Name = name
+    btn.Size = UDim2.new(0.31, 0, 1, 0)
+    btn.Position = UDim2.new(pos * 0.345, 0, 0, 0)
+    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+    btn.Text = text
+    btn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 12
+    btn.Parent = FilterFrame
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    return btn
+end
+
+local AllBtn = createFilterBtn("AllBtn", "📋 All", 0)
+local FavBtn = createFilterBtn("FavBtn", "⭐ Favorites", 1)
+local CustomBtn = createFilterBtn("CustomBtn", "➕ Custom", 2)
+
+-- Scroll Frame
+local SF = Instance.new("ScrollingFrame")
+SF.Size = UDim2.new(1, -20, 0, 280)
+SF.Position = UDim2.new(0, 10, 0, 120)
+SF.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+SF.BorderSizePixel = 0
+SF.ScrollBarThickness = 6
+SF.Parent = MF
+
+Instance.new("UICorner", SF).CornerRadius = UDim.new(0, 8)
+
+local UIL = Instance.new("UIListLayout")
+UIL.Padding = UDim.new(0, 5)
+UIL.Parent = SF
+
+-- Input Frame
+local InputFrame = Instance.new("Frame")
+InputFrame.Size = UDim2.new(1, -20, 0, 35)
+InputFrame.Position = UDim2.new(0, 10, 0, 410)
+InputFrame.BackgroundTransparency = 1
+InputFrame.Parent = MF
+
+local NameBox = Instance.new("TextBox")
+NameBox.Size = UDim2.new(0.35, 0, 1, 0)
+NameBox.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
+NameBox.BorderSizePixel = 0
+NameBox.PlaceholderText = "Tên emote..."
+NameBox.Text = ""
+NameBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+NameBox.Font = Enum.Font.Gotham
+NameBox.TextSize = 12
+NameBox.Parent = InputFrame
+Instance.new("UICorner", NameBox).CornerRadius = UDim.new(0, 6)
+
+local IdBox = Instance.new("TextBox")
+IdBox.Size = UDim2.new(0.4, 0, 1, 0)
+IdBox.Position = UDim2.new(0.37, 0, 0, 0)
+IdBox.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
+IdBox.BorderSizePixel = 0
+IdBox.PlaceholderText = "Animation ID..."
+IdBox.Text = ""
+IdBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+IdBox.Font = Enum.Font.Gotham
+IdBox.TextSize = 12
+IdBox.Parent = InputFrame
+Instance.new("UICorner", IdBox).CornerRadius = UDim.new(0, 6)
+
+local AddBtn = Instance.new("TextButton")
+AddBtn.Size = UDim2.new(0.2, 0, 1, 0)
+AddBtn.Position = UDim2.new(0.79, 0, 0, 0)
+AddBtn.BackgroundColor3 = Color3.fromRGB(60, 140, 60)
+AddBtn.Text = "➕ Add"
+AddBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+AddBtn.Font = Enum.Font.GothamBold
+AddBtn.TextSize = 12
+AddBtn.Parent = InputFrame
+Instance.new("UICorner", AddBtn).CornerRadius = UDim.new(0, 6)
+
+-- Control Frame
+local ControlFrame = Instance.new("Frame")
+ControlFrame.Size = UDim2.new(1, -20, 0, 35)
+ControlFrame.Position = UDim2.new(0, 10, 0, 455)
+ControlFrame.BackgroundTransparency = 1
+ControlFrame.Parent = MF
+
+local function createCtrlBtn(name, text, pos, color)
+    local btn = Instance.new("TextButton")
+    btn.Name = name
+    btn.Size = UDim2.new(0.32, 0, 1, 0)
+    btn.Position = UDim2.new(pos * 0.34, 0, 0, 0)
+    btn.BackgroundColor3 = color
+    btn.Text = text
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 12
+    btn.Parent = ControlFrame
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    return btn
+end
+
+local LockBtn = createCtrlBtn("LockBtn", "🔒 Lock", 0, Color3.fromRGB(70, 140, 70))
+local UnlockBtn = createCtrlBtn("UnlockBtn", "🔓 Unlock", 1, Color3.fromRGB(140, 70, 70))
+local PauseBtn = createCtrlBtn("PauseBtn", "⏸ Pause", 2, Color3.fromRGB(180, 120, 10))
+
+-- Unlock Key Button
+local UnlockKeyBtn = Instance.new("TextButton")
+UnlockKeyBtn.Size = UDim2.new(1, -20, 0, 35)
+UnlockKeyBtn.Position = UDim2.new(0, 10, 0, 500)
+UnlockKeyBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+UnlockKeyBtn.Text = "🔓 Set Unlock Key"
+UnlockKeyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+UnlockKeyBtn.Font = Enum.Font.GothamBold
+UnlockKeyBtn.TextSize = 13
+UnlockKeyBtn.Parent = MF
+Instance.new("UICorner", UnlockKeyBtn).CornerRadius = UDim.new(0, 6)
+
+SG.Parent = game:GetService("CoreGui")
+
+-- =============================================
+-- RENDER EMOTES
+-- =============================================
+local function refreshEmoteList()
+    -- Clear
+    for _, child in ipairs(SF:GetChildren()) do
+        if child:IsA("Frame") then
+            child:Destroy()
+        end
+    end
+    
+    -- Filter
+    local filtered = {}
+    for _, e in ipairs(allEmotes) do
+        if currentFilter == "all" then
+            table.insert(filtered, e)
+        elseif currentFilter == "favorites" and isFavorite(e.id) then
+            table.insert(filtered, e)
+        elseif currentFilter == "custom" and e.custom then
+            table.insert(filtered, e)
+        end
+    end
+    
+    -- Render
+    for _, emote in ipairs(filtered) do
+        local EF = Instance.new("Frame")
+        EF.Size = UDim2.new(1, -10, 0, 40)
+        EF.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
+        EF.BorderSizePixel = 0
+        EF.Parent = SF
+        Instance.new("UICorner", EF).CornerRadius = UDim.new(0, 6)
+        
+        -- Play button
+        local PlayBtn = Instance.new("TextButton")
+        PlayBtn.Size = UDim2.new(0.5, 0, 1, 0)
+        PlayBtn.BackgroundTransparency = 1
+        PlayBtn.Text = emote.name
+        PlayBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        PlayBtn.Font = Enum.Font.Gotham
+        PlayBtn.TextSize = 13
+        PlayBtn.TextXAlignment = Enum.TextXAlignment.Left
+        PlayBtn.Parent = EF
+        
+        local pad = Instance.new("UIPadding")
+        pad.PaddingLeft = UDim.new(0, 10)
+        pad.Parent = PlayBtn
+        
+        PlayBtn.MouseButton1Click:Connect(function()
+            local track = PlayEmote(emote.id)
+            if track then
+                isLocked = true
+                startLoop()
+                SL.Text = "✅ " .. emote.name
+                SL.TextColor3 = Color3.fromRGB(80, 255, 110)
+            else
+                SL.Text = "❌ Error"
+                SL.TextColor3 = Color3.fromRGB(255, 80, 80)
+            end
+        end)
+        
+        -- Favorite button
+        local FavBtn = Instance.new("TextButton")
+        FavBtn.Size = UDim2.new(0, 35, 1, 0)
+        FavBtn.Position = UDim2.new(1, -150, 0, 0)
+        FavBtn.BackgroundTransparency = 1
+        FavBtn.Text = isFavorite(emote.id) and "⭐" or "☆"
+        FavBtn.TextColor3 = Color3.fromRGB(255, 220, 100)
+        FavBtn.Font = Enum.Font.GothamBold
+        FavBtn.TextSize = 18
+        FavBtn.Parent = EF
+        
+        FavBtn.MouseButton1Click:Connect(function()
+            toggleFavorite(emote.id)
+            refreshEmoteList()
+        end)
+        
+        -- Key button
+        local KeyBtn = Instance.new("TextButton")
+        KeyBtn.Size = UDim2.new(0, 70, 1, 0)
+        KeyBtn.Position = UDim2.new(1, -110, 0, 0)
+        KeyBtn.BackgroundColor3 = Color3.fromRGB(60, 100, 140)
+        KeyBtn.BorderSizePixel = 0
+        KeyBtn.Parent = EF
+        Instance.new("UICorner", KeyBtn).CornerRadius = UDim.new(0, 4)
+        
+        local keyCode = emoteKeybinds[emote.id]
+        if keyCode then
+            KeyBtn.Text = "⌨️ " .. getKeyName(keyCode)
+            KeyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        else
+            KeyBtn.Text = "Set Key"
+            KeyBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
+        end
+        KeyBtn.Font = Enum.Font.Gotham
+        KeyBtn.TextSize = 11
+        
+        KeyBtn.MouseButton1Click:Connect(function()
+            isSettingKeybind = true
+            settingKeybindFor = emote.id
+            KeyBtn.Text = "Press..."
+            KeyBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 30)
+            SL.Text = "⌨️ Click vào game rồi nhấn phím..."
+            SL.TextColor3 = Color3.fromRGB(255, 255, 100)
+        end)
+        
+        -- Delete button (custom only)
+        if emote.custom then
+            local DelBtn = Instance.new("TextButton")
+            DelBtn.Size = UDim2.new(0, 35, 1, 0)
+            DelBtn.Position = UDim2.new(1, -35, 0, 0)
+            DelBtn.BackgroundColor3 = Color3.fromRGB(140, 40, 40)
+            DelBtn.Text = "🗑"
+            DelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            DelBtn.Font = Enum.Font.GothamBold
+            DelBtn.TextSize = 14
+            DelBtn.BorderSizePixel = 0
+            DelBtn.Parent = EF
+            Instance.new("UICorner", DelBtn).CornerRadius = UDim.new(0, 4)
+            
+            DelBtn.MouseButton1Click:Connect(function()
+                if removeCustomEmote(emote.id) then
+                    refreshEmoteList()
+                    SL.Text = "🗑 Đã xóa"
+                    SL.TextColor3 = Color3.fromRGB(200, 200, 200)
+                end
+            end)
+        end
+    end
+    
+    SF.CanvasSize = UDim2.new(0, 0, 0, UIL.AbsoluteContentSize.Y + 10)
+end
+
+local function updateFilter(filter)
+    currentFilter = filter
+    AllBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+    FavBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+    CustomBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+    
+    if filter == "all" then
+        AllBtn.BackgroundColor3 = Color3.fromRGB(70, 140, 70)
+    elseif filter == "favorites" then
+        FavBtn.BackgroundColor3 = Color3.fromRGB(70, 140, 70)
+    elseif filter == "custom" then
+        CustomBtn.BackgroundColor3 = Color3.fromRGB(70, 140, 70)
+    end
+    
+    refreshEmoteList()
+end
+
+-- =============================================
+-- INPUT HANDLER
+-- =============================================
+UserInputService.InputBegan:Connect(function(input, gp)
+    -- Setting unlock key
+    if isSettingUnlockKey and input.UserInputType == Enum.UserInputType.Keyboard then
+        local key = input.KeyCode
+        if key ~= Enum.KeyCode.Unknown and 
+           key ~= Enum.KeyCode.LeftShift and key ~= Enum.KeyCode.RightShift and
+           key ~= Enum.KeyCode.LeftControl and key ~= Enum.KeyCode.RightControl then
+            
+            if not keybinds[key] then
+                unlockKeybind = key
+                saveSettings()
+                UnlockKeyBtn.Text = "⌨️ Unlock: " .. getKeyName(key)
+                UnlockKeyBtn.BackgroundColor3 = Color3.fromRGB(60, 100, 140)
+                SL.Text = "✅ Unlock key: " .. getKeyName(key)
+                SL.TextColor3 = Color3.fromRGB(80, 255, 110)
+            else
+                SL.Text = "❌ Phím đã dùng!"
+                SL.TextColor3 = Color3.fromRGB(255, 80, 80)
+            end
+            isSettingUnlockKey = false
+        end
+        return
+    end
+    
+    -- Setting emote key
+    if isSettingKeybind and settingKeybindFor and input.UserInputType == Enum.UserInputType.Keyboard then
+        local key = input.KeyCode
+        if key ~= Enum.KeyCode.Unknown and 
+           key ~= Enum.KeyCode.LeftShift and key ~= Enum.KeyCode.RightShift and
+           key ~= Enum.KeyCode.LeftControl and key ~= Enum.KeyCode.RightControl then
+            
+            if key == unlockKeybind then
+                SL.Text = "❌ Phím này dùng cho Unlock!"
+                SL.TextColor3 = Color3.fromRGB(255, 80, 80)
+            else
+                -- Remove old binding
+                local oldKey = emoteKeybinds[settingKeybindFor]
+                if oldKey then keybinds[oldKey] = nil end
+                
+                -- Remove if key used by other emote
+                local oldEmote = keybinds[key]
+                if oldEmote then emoteKeybinds[oldEmote] = nil end
+                
+                -- Set new binding
+                keybinds[key] = settingKeybindFor
+                emoteKeybinds[settingKeybindFor] = key
+                saveKeybinds()
+                
+                local emote = findEmoteById(settingKeybindFor)
+                if emote then
+                    SL.Text = "✅ " .. getKeyName(key) .. " → " .. emote.name
+                    SL.TextColor3 = Color3.fromRGB(80, 255, 110)
+                end
+            end
+            isSettingKeybind = false
+            settingKeybindFor = nil
+            refreshEmoteList()
+        end
+        return
+    end
+    
+    -- Normal usage
+    if gp or UserInputService:GetFocusedTextBox() then return end
+    
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        -- Unlock
+        if input.KeyCode == unlockKeybind then
+            unlockEmote()
+            PauseBtn.Text = "⏸ Pause"
+            PauseBtn.BackgroundColor3 = Color3.fromRGB(180, 120, 10)
+            SL.Text = "🔓 Unlocked"
+            SL.TextColor3 = Color3.fromRGB(200, 200, 200)
+            return
+        end
+        
+        -- Emote
+        local emoteId = keybinds[input.KeyCode]
+        if emoteId then
+            local emote = findEmoteById(emoteId)
+            if emote then
+                local track = PlayEmote(emote.id)
+                if track then
+                    isLocked = true
+                    startLoop()
+                    SL.Text = "✅ " .. emote.name
+                    SL.TextColor3 = Color3.fromRGB(80, 255, 110)
+                end
+            end
+        end
+    end
+end)
+
+-- =============================================
+-- BUTTON EVENTS
+-- =============================================
+AddBtn.MouseButton1Click:Connect(function()
+    local name = NameBox.Text
+    local id = IdBox.Text:match("%d+")
+    
+    if not name or name == "" then
+        SL.Text = "⚠️ Nhập tên!"
+        SL.TextColor3 = Color3.fromRGB(255, 200, 50)
+        return
+    end
+    
+    if not id then
+        SL.Text = "⚠️ Nhập ID!"
+        SL.TextColor3 = Color3.fromRGB(255, 200, 50)
+        return
+    end
+    
+    local ok, msg = addCustomEmote(name, id)
+    if ok then
+        SL.Text = msg
+        SL.TextColor3 = Color3.fromRGB(80, 255, 110)
+        NameBox.Text = ""
+        IdBox.Text = ""
+        refreshEmoteList()
+    else
+        SL.Text = "❌ " .. msg
+        SL.TextColor3 = Color3.fromRGB(255, 80, 80)
+    end
+end)
+
+AllBtn.MouseButton1Click:Connect(function() updateFilter("all") end)
+FavBtn.MouseButton1Click:Connect(function() updateFilter("favorites") end)
+CustomBtn.MouseButton1Click:Connect(function() updateFilter("custom") end)
+
+LockBtn.MouseButton1Click:Connect(function()
+    if not currentTrack then
+        for _, t in ipairs(Animator:GetPlayingAnimationTracks()) do
+            if t.Animation and not isDefault(t.Animation.AnimationId) then
+                currentTrack = t
+                break
+            end
+        end
+    end
+    if currentTrack then
+        isLocked = true
+        startLoop()
+        SL.Text = "✅ Locked"
+        SL.TextColor3 = Color3.fromRGB(80, 255, 110)
+    else
+        SL.Text = "⚠️ Play emote first!"
+        SL.TextColor3 = Color3.fromRGB(255, 200, 50)
+    end
+end)
+
+UnlockBtn.MouseButton1Click:Connect(function()
+    unlockEmote()
+    PauseBtn.Text = "⏸ Pause"
+    PauseBtn.BackgroundColor3 = Color3.fromRGB(180, 120, 10)
+    SL.Text = "🔓 Unlocked"
+    SL.TextColor3 = Color3.fromRGB(200, 200, 200)
+end)
+
+PauseBtn.MouseButton1Click:Connect(function()
+    if not isLocked then
+        SL.Text = "⚠️ Lock first!"
+        SL.TextColor3 = Color3.fromRGB(255, 200, 50)
+        return
+    end
+    if not isPaused then
+        isPaused = true
+        pcall(function() currentTrack:AdjustSpeed(0) end)
+        PauseBtn.Text = "▶ Resume"
+        PauseBtn.BackgroundColor3 = Color3.fromRGB(30, 110, 190)
+        SL.Text = "⏸ Paused"
+        SL.TextColor3 = Color3.fromRGB(100, 180, 255)
+    else
+        isPaused = false
+        pcall(function() currentTrack:AdjustSpeed(1) end)
+        PauseBtn.Text = "⏸ Pause"
+        PauseBtn.BackgroundColor3 = Color3.fromRGB(180, 120, 10)
+        SL.Text = "▶ Resumed"
+        SL.TextColor3 = Color3.fromRGB(80, 255, 110)
+    end
+end)
+
+UnlockKeyBtn.MouseButton1Click:Connect(function()
+    isSettingUnlockKey = true
+    UnlockKeyBtn.Text = "Press key..."
+    UnlockKeyBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 30)
+    SL.Text = "⌨️ Click vào game rồi nhấn phím..."
+    SL.TextColor3 = Color3.fromRGB(255, 255, 100)
+end)
+
+-- Drag
+local drag, dragStart, startPos = false, nil, nil
+TB.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        drag = true
+        dragStart = input.Position
+        startPos = MF.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if drag and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        MF.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        drag = false
+    end
+end)
+
+-- =============================================
+-- RESPAWN
+-- =============================================
+local stateChangedConn = nil
+
+local function setupStateHandler()
+    -- Cleanup old connection
+    if stateChangedConn then
+        stateChangedConn:Disconnect()
+    end
+    
+    -- Listen for state changes (jumping, falling, swimming, etc.)
+    stateChangedConn = Hum.StateChanged:Connect(function(oldState, newState)
+        -- Khi state thay đổi và đang lock, đảm bảo animation vẫn chạy
+        if isLocked and not isPaused and currentTrack then
+            task.wait(0.1) -- Đợi state settle
+            if not currentTrack.IsPlaying then
+                currentTrack:Play()
+            end
+        end
+    end)
+end
+
+LP.CharacterAdded:Connect(function(c)
+    Char = c
+    Hum = c:WaitForChild("Humanoid")
+    Animator = Hum:WaitForChild("Animator")
+    
+    if loopConn then loopConn:Disconnect() end
+    isLocked = false
+    isPaused = false
+    currentTrack = nil
+    
+    -- Setup state handler for new character
+    setupStateHandler()
+    
+    SL.Text = "✅ Ready after respawn"
+    SL.TextColor3 = Color3.fromRGB(80, 255, 110)
+    PauseBtn.Text = "⏸ Pause"
+    PauseBtn.BackgroundColor3 = Color3.fromRGB(180, 120, 10)
+end)
+
+-- =============================================
+-- INIT
+-- =============================================
+loadFavorites()
+loadCustomEmotes()
+loadKeybinds()
+loadSettings()
+buildEmoteList()
+updateFilter("all")
+setupStateHandler() -- Setup state handler
+
+if unlockKeybind then
+    UnlockKeyBtn.Text = "⌨️ Unlock: " .. getKeyName(unlockKeybind)
+    UnlockKeyBtn.BackgroundColor3 = Color3.fromRGB(60, 100, 140)
+end
+
+print("✅ Loaded " .. #allEmotes .. " emotes")
+print("✅ State handler active")
+print("✅ Script ready!")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")

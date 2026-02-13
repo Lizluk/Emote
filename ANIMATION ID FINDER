@@ -1,0 +1,181 @@
+--[[
+    ANIMATION ID FINDER
+    Script này giúp bạn tìm Animation ID của emote
+    
+    CÁCH DÙNG:
+    1. Chạy script này
+    2. Dùng emote bạn muốn lấy ID
+    3. Xem Output/Console - ID sẽ được in ra
+    4. Copy ID và paste vào EmoteAnywhere script
+--]]
+
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+local Char = LP.Character or LP.CharacterAdded:Wait()
+local Hum = Char:WaitForChild("Humanoid")
+local Animator = Hum:WaitForChild("Animator")
+
+-- GUI để hiển thị Animation IDs
+local SG = Instance.new("ScreenGui")
+SG.Name = "AnimationIDFinder"
+SG.ResetOnSpawn = false
+SG.Parent = LP.PlayerGui
+
+local Frame = Instance.new("Frame")
+Frame.Size = UDim2.new(0, 350, 0, 400)
+Frame.Position = UDim2.new(1, -360, 0, 10)
+Frame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+Frame.BorderSizePixel = 0
+Frame.Parent = SG
+Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 10)
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 35)
+Title.BackgroundColor3 = Color3.fromRGB(60, 40, 120)
+Title.Text = "🔍 Animation ID Finder"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 16
+Title.Font = Enum.Font.GothamBold
+Title.Parent = Frame
+Instance.new("UICorner", Title).CornerRadius = UDim.new(0, 10)
+
+local Info = Instance.new("TextLabel")
+Info.Size = UDim2.new(1, -10, 0, 40)
+Info.Position = UDim2.new(0, 5, 0, 40)
+Info.BackgroundTransparency = 1
+Info.Text = "Dùng emote → ID sẽ hiện bên dưới\nClick vào ID để copy"
+Info.TextColor3 = Color3.fromRGB(180, 180, 255)
+Info.TextSize = 12
+Info.Font = Enum.Font.Gotham
+Info.TextWrapped = true
+Info.Parent = Frame
+
+local ScrollFrame = Instance.new("ScrollingFrame")
+ScrollFrame.Size = UDim2.new(1, -10, 1, -90)
+ScrollFrame.Position = UDim2.new(0, 5, 0, 85)
+ScrollFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
+ScrollFrame.BorderSizePixel = 0
+ScrollFrame.ScrollBarThickness = 6
+ScrollFrame.Parent = Frame
+Instance.new("UICorner", ScrollFrame).CornerRadius = UDim.new(0, 8)
+
+local Layout = Instance.new("UIListLayout")
+Layout.Padding = UDim.new(0, 3)
+Layout.Parent = ScrollFrame
+
+-- Tracking
+local trackedIDs = {}
+local idButtons = {}
+
+local function createIDButton(animId, animName)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -10, 0, 40)
+    btn.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+    btn.Text = string.format("%s\nID: %s", animName or "Unknown", animId)
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 11
+    btn.Font = Enum.Font.Gotham
+    btn.BorderSizePixel = 0
+    btn.Parent = ScrollFrame
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    
+    btn.MouseButton1Click:Connect(function()
+        setclipboard(animId)
+        btn.BackgroundColor3 = Color3.fromRGB(60, 120, 60)
+        btn.Text = string.format("%s\nID: %s ✅ COPIED!", animName or "Unknown", animId)
+        task.wait(1.5)
+        btn.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+        btn.Text = string.format("%s\nID: %s", animName or "Unknown", animId)
+    end)
+    
+    return btn
+end
+
+-- Monitor animations
+local function checkAnimations()
+    for _, track in ipairs(Animator:GetPlayingAnimationTracks()) do
+        if track.Animation then
+            local fullId = track.Animation.AnimationId
+            local animId = fullId:match("%d+")
+            
+            if animId and not trackedIDs[animId] then
+                -- Lọc bỏ default animations
+                local defaults = {
+                    "507766388","507766666","507766951","507776061",
+                    "507776159","507777826","507777347","180426354","180426388",
+                    "507760248","507760952","507761454","507762013","507763714",
+                    "507765644","616163682","616159736","616158929",
+                }
+                
+                local isDefault = false
+                for _, defId in ipairs(defaults) do
+                    if animId == defId then
+                        isDefault = true
+                        break
+                    end
+                end
+                
+                if not isDefault then
+                    trackedIDs[animId] = true
+                    local btn = createIDButton(animId, track.Name)
+                    table.insert(idButtons, btn)
+                    
+                    -- Print to console
+                    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                    print("🎭 NEW ANIMATION DETECTED!")
+                    print("📝 Name:", track.Name)
+                    print("🔢 Animation ID:", animId)
+                    print("💾 Full ID:", fullId)
+                    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                    
+                    -- Update scroll size
+                    ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, #idButtons * 43)
+                end
+            end
+        end
+    end
+end
+
+-- Clear button
+local ClearBtn = Instance.new("TextButton")
+ClearBtn.Size = UDim2.new(1, -10, 0, 30)
+ClearBtn.Position = UDim2.new(0, 5, 1, -35)
+ClearBtn.BackgroundColor3 = Color3.fromRGB(160, 40, 40)
+ClearBtn.Text = "🗑️ Clear All"
+ClearBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ClearBtn.TextSize = 13
+ClearBtn.Font = Enum.Font.GothamBold
+ClearBtn.BorderSizePixel = 0
+ClearBtn.Parent = Frame
+Instance.new("UICorner", ClearBtn).CornerRadius = UDim.new(0, 8)
+
+ClearBtn.MouseButton1Click:Connect(function()
+    for _, btn in ipairs(idButtons) do
+        btn:Destroy()
+    end
+    idButtons = {}
+    trackedIDs = {}
+    ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+    print("[AnimationIDFinder] Cleared all tracked IDs")
+end)
+
+-- Run checker
+task.spawn(function()
+    while true do
+        checkAnimations()
+        task.wait(0.5)
+    end
+end)
+
+-- Respawn handler
+LP.CharacterAdded:Connect(function(newChar)
+    Char = newChar
+    Hum = newChar:WaitForChild("Humanoid")
+    Animator = Hum:WaitForChild("Animator")
+end)
+
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🔍 Animation ID Finder Started!")
+print("📖 Sử dụng emote để tự động lấy ID")
+print("💾 Click vào ID trong GUI để copy")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")

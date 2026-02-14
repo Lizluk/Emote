@@ -1,0 +1,189 @@
+--[[
+    PLAYER TRACKER & AUTO FOLLOWER (V15 - UPDATE/OVERWRITE FAVORITES)
+    
+    TÍNH NĂNG MỚI:
+    🔄 Overwrite/Update: Nút cập nhật thông số trực tiếp vào Pose đã lưu.
+    🔒 Smart Shift Lock: Chỉ xoay người khi bật Shift Lock.
+    🎯 Close Start: Mặc định đứng sát mục tiêu (Distance 1.5).
+    🚀 No Limits: Kéo từ -100 đến 100.
+--]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+
+local LP = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local fileName = "FollowerFull_V15.json"
+
+local followSettings = {
+    enabled = false,
+    target = nil,
+    distance = 1.5,
+    height = 0,
+    side = 0,
+    tilt = 0,
+    angle = 180
+}
+
+local favorites = {}
+
+local function saveData()
+    local data = {current = followSettings, favorites = favorites}
+    writefile(fileName, HttpService:JSONEncode(data))
+end
+
+local function loadData()
+    if isfile(fileName) then
+        local success, data = pcall(function() return HttpService:JSONDecode(readfile(fileName)) end)
+        if success then
+            followSettings = data.current or followSettings
+            favorites = data.favorites or {}
+        end
+    end
+end
+loadData()
+
+-- =============================================
+-- FOLLOW LOGIC (V15)
+-- =============================================
+local followConnection = nil
+local lastRotation = CFrame.identity
+
+local function startFollowing(targetPlayer)
+    if not targetPlayer then return end
+    if followConnection then followConnection:Disconnect() end
+    followSettings.enabled = true
+    followSettings.target = targetPlayer
+    
+    followConnection = RunService.Heartbeat:Connect(function()
+        if not followSettings.enabled or not followSettings.target then return end
+        local tChar = followSettings.target.Character
+        local myChar = LP.Character 
+        if tChar and tChar:FindFirstChild("HumanoidRootPart") and myChar and myChar:FindFirstChild("HumanoidRootPart") then
+            local tHRP = tChar.HumanoidRootPart
+            local myHRP = myChar.HumanoidRootPart
+            local safeDist = math.abs(followSettings.distance) < 0.01 and 0.01 or followSettings.distance
+            
+            local rotation = CFrame.Angles(0, math.rad(followSettings.angle), 0)
+            local baseCF = tHRP.CFrame * rotation
+            local offset = (baseCF.LookVector * safeDist) + (baseCF.RightVector * followSettings.side) + Vector3.new(0, followSettings.height, 0)
+            local goalPos = tHRP.Position + offset
+            
+            local finalRotation
+            if UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
+                local lookAtPos = goalPos + Camera.CFrame.LookVector
+                finalRotation = CFrame.new(goalPos, Vector3.new(lookAtPos.X, goalPos.Y, lookAtPos.Z))
+                lastRotation = finalRotation
+            else
+                finalRotation = lastRotation == CFrame.identity and CFrame.new(goalPos, Vector3.new(tHRP.Position.X, goalPos.Y, tHRP.Position.Z)) or CFrame.new(goalPos) * (lastRotation - lastRotation.Position)
+            end
+            
+            myHRP.CFrame = finalRotation * CFrame.Angles(math.rad(followSettings.tilt), 0, 0)
+            myHRP.Velocity = Vector3.zero
+        end
+    end)
+end
+
+-- =============================================
+-- GUI (V15)
+-- =============================================
+local SG = Instance.new("ScreenGui", LP.PlayerGui); SG.Name = "FollowerV15"; SG.ResetOnSpawn = false
+local MF = Instance.new("Frame", SG); MF.Size = UDim2.new(0, 340, 0, 680); MF.Position = UDim2.new(1, -350, 0.5, -340); MF.BackgroundColor3 = Color3.fromRGB(20, 20, 30); Instance.new("UICorner", MF)
+Instance.new("UIStroke", MF).Color = Color3.fromRGB(150, 80, 255)
+
+local TB = Instance.new("Frame", MF); TB.Size = UDim2.new(1, 0, 0, 40); TB.BackgroundColor3 = Color3.fromRGB(100, 60, 200); Instance.new("UICorner", TB)
+local TL = Instance.new("TextLabel", TB); TL.Size = UDim2.new(1, 0, 1, 0); TL.Text = "FOLLOW V15 - OVERWRITE MODE"; TL.TextColor3 = Color3.new(1, 1, 1); TL.Font = "GothamBold"; TL.BackgroundTransparency = 1
+
+local Sliders = Instance.new("Frame", MF); Sliders.Size = UDim2.new(1, -20, 0, 260); Sliders.Position = UDim2.new(0, 10, 0, 50); Sliders.BackgroundTransparency = 1
+
+local function createSlider(text, min, max, key, pos)
+    local label = Instance.new("TextLabel", Sliders); label.Size = UDim2.new(1,0,0,20); label.Position = UDim2.new(0,0,0,pos); label.TextColor3 = Color3.new(1,1,1); label.Font = "GothamBold"; label.TextSize = 10; label.BackgroundTransparency = 1
+    local bg = Instance.new("Frame", Sliders); bg.Size = UDim2.new(1,0,0,8); bg.Position = UDim2.new(0,0,0,pos+18); bg.BackgroundColor3 = Color3.fromRGB(45,45,60); Instance.new("UICorner", bg)
+    local fill = Instance.new("Frame", bg); fill.BackgroundColor3 = Color3.fromRGB(150, 80, 255); Instance.new("UICorner", fill)
+    RunService.RenderStepped:Connect(function()
+        local val = followSettings[key]; label.Text = text .. ": " .. string.format("%.1f", val)
+        fill.Size = UDim2.new(math.clamp((val - min)/(max - min), 0, 1), 0, 1, 0)
+    end)
+    bg.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            local conn; conn = RunService.RenderStepped:Connect(function()
+                if not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then conn:Disconnect() saveData() return end
+                followSettings[key] = min + (math.clamp((UserInputService:GetMouseLocation().X - bg.AbsolutePosition.X)/bg.AbsoluteSize.X, 0, 1) * (max - min))
+            end)
+        end
+    end)
+end
+
+createSlider("↔️ Distance", -100, 100, "distance", 0)
+createSlider("↕️ Height", -100, 100, "height", 45)
+createSlider("⬅️➡️ Side", -100, 100, "side", 90)
+createSlider("📐 Tilt", -180, 180, "tilt", 135)
+createSlider("🔄 Angle", -360, 360, "angle", 180)
+
+local FavScroll = Instance.new("ScrollingFrame", MF); FavScroll.Size = UDim2.new(1, -20, 0, 110); FavScroll.Position = UDim2.new(0, 10, 0, 320); FavScroll.BackgroundColor3 = Color3.fromRGB(15, 15, 25); FavScroll.ScrollBarThickness = 2
+Instance.new("UIListLayout", FavScroll).Padding = UDim.new(0, 3)
+
+local function updateFavUI()
+    for _, v in pairs(FavScroll:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
+    for i, fav in ipairs(favorites) do
+        local f = Instance.new("Frame", FavScroll); f.Size = UDim2.new(1, -5, 0, 30); f.BackgroundColor3 = Color3.fromRGB(45, 45, 60); Instance.new("UICorner", f)
+        
+        -- Nút Chọn Pose
+        local btn = Instance.new("TextButton", f); btn.Size = UDim2.new(0.65, 0, 1, 0); btn.BackgroundTransparency = 1; btn.Text = " ⭐ " .. (fav.name or "Pose"); btn.TextColor3 = Color3.new(1,1,1); btn.TextXAlignment = "Left"; btn.Font = "Gotham"
+        
+        -- NÚT LƯU ĐÈ (UPDATE)
+        local up = Instance.new("TextButton", f); up.Size = UDim2.new(0.15, 0, 0.8, 0); up.Position = UDim2.new(0.66, 0, 0.1, 0); up.BackgroundColor3 = Color3.fromRGB(100, 100, 255); up.Text = "🔄"; up.TextColor3 = Color3.new(1,1,1); Instance.new("UICorner", up)
+        
+        -- Nút Xóa
+        local del = Instance.new("TextButton", f); del.Size = UDim2.new(0.15, 0, 0.8, 0); del.Position = UDim2.new(0.82, 0, 0.1, 0); del.BackgroundColor3 = Color3.fromRGB(150, 50, 50); del.Text = "X"; del.TextColor3 = Color3.new(1,1,1); Instance.new("UICorner", del)
+        
+        btn.MouseButton1Click:Connect(function() 
+            followSettings.distance = fav.distance; followSettings.height = fav.height; followSettings.side = fav.side or 0; followSettings.tilt = fav.tilt; followSettings.angle = fav.angle 
+        end)
+        
+        -- Logic Lưu Đè
+        up.MouseButton1Click:Connect(function()
+            favorites[i].distance = followSettings.distance
+            favorites[i].height = followSettings.height
+            favorites[i].side = followSettings.side
+            favorites[i].tilt = followSettings.tilt
+            favorites[i].angle = followSettings.angle
+            saveData()
+            up.Text = "✅"; wait(0.5); up.Text = "🔄"
+        end)
+        
+        del.MouseButton1Click:Connect(function() table.remove(favorites, i); saveData(); updateFavUI() end)
+    end
+    FavScroll.CanvasSize = UDim2.new(0,0,0, #favorites * 33)
+end
+
+local NameInput = Instance.new("TextBox", MF); NameInput.Size = UDim2.new(0.65, -15, 0, 30); NameInput.Position = UDim2.new(0, 10, 0, 440); NameInput.BackgroundColor3 = Color3.fromRGB(30, 30, 45); NameInput.TextColor3 = Color3.new(1,1,1); NameInput.PlaceholderText = "Tên mới..."; NameInput.Text = ""; NameInput.Font = "Gotham"; Instance.new("UICorner", NameInput)
+local AddBtn = Instance.new("TextButton", MF); AddBtn.Size = UDim2.new(0.35, -5, 0, 30); AddBtn.Position = UDim2.new(0.65, 0, 0, 440); AddBtn.BackgroundColor3 = Color3.fromRGB(60, 160, 100); AddBtn.Text = "SAVE NEW"; AddBtn.TextColor3 = Color3.new(1,1,1); AddBtn.Font = "GothamBold"; Instance.new("UICorner", AddBtn)
+
+AddBtn.MouseButton1Click:Connect(function()
+    table.insert(favorites, {name = NameInput.Text ~= "" and NameInput.Text or ("Pose "..#favorites+1), distance = followSettings.distance, height = followSettings.height, side = followSettings.side, tilt = followSettings.tilt, angle = followSettings.angle})
+    NameInput.Text = ""; saveData(); updateFavUI()
+end)
+
+local PlayerScroll = Instance.new("ScrollingFrame", MF); PlayerScroll.Size = UDim2.new(1, -20, 0, 140); PlayerScroll.Position = UDim2.new(0, 10, 0, 480); PlayerScroll.BackgroundColor3 = Color3.fromRGB(15, 15, 25); Instance.new("UIListLayout", PlayerScroll).Padding = UDim.new(0, 3)
+local function refreshPlayers()
+    for _, v in pairs(PlayerScroll:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LP then
+            local b = Instance.new("TextButton", PlayerScroll); b.Size = UDim2.new(1, -5, 0, 30); b.BackgroundColor3 = Color3.fromRGB(45, 45, 60); b.Text = " 👤 " .. p.Name; b.TextColor3 = Color3.new(1,1,1); b.TextXAlignment = "Left"; b.Font = "Gotham"; Instance.new("UICorner", b); b.MouseButton1Click:Connect(function() startFollowing(p) end)
+        end
+    end
+    PlayerScroll.CanvasSize = UDim2.new(0,0,0, #Players:GetPlayers() * 33)
+end
+
+local StopBtn = Instance.new("TextButton", MF); StopBtn.Size = UDim2.new(1, -20, 0, 40); StopBtn.Position = UDim2.new(0, 10, 0, 630); StopBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50); StopBtn.Text = "STOP"; StopBtn.TextColor3 = Color3.new(1,1,1); StopBtn.Font = "GothamBold"; Instance.new("UICorner", StopBtn); StopBtn.MouseButton1Click:Connect(function() followSettings.enabled = false if followConnection then followConnection:Disconnect() end end)
+
+local dragToggle, dragStart, startPos
+TB.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then dragToggle = true dragStart = input.Position startPos = MF.Position end end)
+UserInputService.InputChanged:Connect(function(input) if dragToggle and input.UserInputType == Enum.UserInputType.MouseMovement then local delta = input.Position - dragStart MF.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y) end end)
+UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then dragToggle = false end end)
+
+updateFavUI(); refreshPlayers()
+Players.PlayerAdded:Connect(refreshPlayers); Players.PlayerRemoving:Connect(refreshPlayers)

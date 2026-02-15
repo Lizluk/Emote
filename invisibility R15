@@ -1,0 +1,119 @@
+local player = game.Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+
+local animationsEnabled = true
+local currentCharacter = nil
+local animateScript = nil
+local originalAnimIds = {}
+
+local function saveOriginalAnimations()
+    if not animateScript then return end
+    
+    originalAnimIds = {
+        idle1 = animateScript.idle.Animation1.AnimationId,
+        idle2 = animateScript.idle.Animation2.AnimationId,
+        walk = animateScript.walk.WalkAnim.AnimationId,
+        run = animateScript.run.RunAnim.AnimationId,
+    }
+    
+    if animateScript:FindFirstChild("jump") then
+        originalAnimIds.jump = animateScript.jump.JumpAnim.AnimationId
+    end
+    if animateScript:FindFirstChild("fall") then
+        originalAnimIds.fall = animateScript.fall.FallAnim.AnimationId
+    end
+    if animateScript:FindFirstChild("climb") then
+        originalAnimIds.climb = animateScript.climb.ClimbAnim.AnimationId
+    end
+end
+
+local function applyCustomAnimations()
+    if not animateScript then return end
+    
+    animateScript.idle.Animation1.AnimationId = "http://www.roblox.com/asset/?id=80007036319743"
+    animateScript.idle.Animation2.AnimationId = "http://www.roblox.com/asset/?id=80007036319743"
+    animateScript.walk.WalkAnim.AnimationId = "http://www.roblox.com/asset/?id=80007036319743"
+    animateScript.run.RunAnim.AnimationId = "http://www.roblox.com/asset/?id=80007036319743"
+    
+    if animateScript:FindFirstChild("jump") then
+        animateScript.jump.JumpAnim.AnimationId = "http://www.roblox.com/asset/?id=80007036319743"
+    end
+    if animateScript:FindFirstChild("fall") then
+        animateScript.fall.FallAnim.AnimationId = "http://www.roblox.com/asset/?id=80007036319743"
+    end
+    if animateScript:FindFirstChild("climb") then
+        animateScript.climb.ClimbAnim.AnimationId = "http://www.roblox.com/asset/?id=80007036319743"
+    end
+    
+    -- Reload Animate script
+    animateScript.Disabled = true
+    wait(0.1)
+    animateScript.Disabled = false
+end
+
+local function restoreOriginalAnimations()
+    if not animateScript or not next(originalAnimIds) then return end
+    
+    animateScript.idle.Animation1.AnimationId = originalAnimIds.idle1
+    animateScript.idle.Animation2.AnimationId = originalAnimIds.idle2
+    animateScript.walk.WalkAnim.AnimationId = originalAnimIds.walk
+    animateScript.run.RunAnim.AnimationId = originalAnimIds.run
+    
+    if originalAnimIds.jump and animateScript:FindFirstChild("jump") then
+        animateScript.jump.JumpAnim.AnimationId = originalAnimIds.jump
+    end
+    if originalAnimIds.fall and animateScript:FindFirstChild("fall") then
+        animateScript.fall.FallAnim.AnimationId = originalAnimIds.fall
+    end
+    if originalAnimIds.climb and animateScript:FindFirstChild("climb") then
+        animateScript.climb.ClimbAnim.AnimationId = originalAnimIds.climb
+    end
+    
+    -- Reload Animate script
+    animateScript.Disabled = true
+    wait(0.1)
+    animateScript.Disabled = false
+end
+
+local function onCharacterAdded(character)
+    currentCharacter = character
+    local humanoid = character:WaitForChild("Humanoid")
+    
+    if humanoid.RigType ~= Enum.HumanoidRigType.R15 then
+        return
+    end
+    
+    animateScript = character:WaitForChild("Animate")
+    
+    -- Lưu animation gốc
+    saveOriginalAnimations()
+    
+    -- Apply custom animations khi bắt đầu
+    if animationsEnabled then
+        applyCustomAnimations()
+    end
+end
+
+-- Xử lý phím R
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    if input.KeyCode == Enum.KeyCode.R then
+        animationsEnabled = not animationsEnabled
+        
+        if animationsEnabled then
+            -- BẬT custom animation
+            applyCustomAnimations()
+            print("✅ Animation: BẬT")
+        else
+            -- TẮT - Khôi phục animation gốc
+            restoreOriginalAnimations()
+            print("❌ Animation: TẮT - Đã khôi phục animation mặc định")
+        end
+    end
+end)
+
+player.CharacterAdded:Connect(onCharacterAdded)
+if player.Character then
+    onCharacterAdded(player.Character)
+end
